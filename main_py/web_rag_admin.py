@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import LOG_PATH
 from api_client import stream_chat, compute_metrics, is_server_ready
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 logging.basicConfig(
     filename=str(LOG_PATH),
@@ -270,7 +272,11 @@ defaults = {
     "last_question": "",
     "last_answer"  : "",
     "session_id"   : str(uuid.uuid4()),
-    "openai_key"   : "",
+    "openai_key"   : os.getenv("OPENAI_API_KEY", ""),
+    "gemini_key"   : os.getenv("GEMINI_API_KEY", ""),
+    "openrouter_key": os.getenv("OPENROUTER_API_KEY", ""),
+    "llm_provider" : "local",
+    "llm_model"    : "",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -314,16 +320,43 @@ with st.sidebar:
     else:
         st.markdown('<p style="color:var(--text-muted);font-size:0.8rem;">아직 대화 기록이 없습니다.</p>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-header" style="margin-top:16px;">평가 설정</div>', unsafe_allow_html=True)
-    openai_key_input = st.text_input(
-        "OpenAI API Key (선택)",
-        value=st.session_state.openai_key,
-        type="password",
-        placeholder="sk-... (LLM 기반 평가 활성화)",
-    )
-    if openai_key_input != st.session_state.openai_key:
-        st.session_state.openai_key = openai_key_input
+    st.markdown('<div class="section-header" style="margin-top:16px;">LLM 설정</div>', unsafe_allow_html=True)
 
+    provider_options = {
+        "local"      : "로컬 (Phi-4-mini)",
+        "openai"     : "OpenAI GPT-4o-mini",
+        "gemini"     : "Gemini 2.5 Flash",
+        "openrouter" : "OpenRouter",
+    }
+    selected_provider = st.selectbox(
+        "LLM 선택",
+        options=list(provider_options.keys()),
+        format_func=lambda x: provider_options[x],
+        index=list(provider_options.keys()).index(st.session_state.llm_provider),
+    )
+    if selected_provider != st.session_state.llm_provider:
+        st.session_state.llm_provider = selected_provider
+
+    if selected_provider == "openrouter":
+        model_input = st.text_input(
+            "OpenRouter 모델 (선택)",
+            value=st.session_state.llm_model,
+            placeholder="ex) anthropic/claude-3-haiku",
+        )
+        if model_input != st.session_state.llm_model:
+            st.session_state.llm_model = model_input
+
+    if selected_provider != "local":
+        key_map = {"openai": "openai_key", "gemini": "gemini_key", "openrouter": "openrouter_key"}
+        key_attr = key_map[selected_provider]
+        if st.session_state[key_attr]:
+            st.markdown('<p style="color:#10b981;font-size:0.75rem;">외부 LLM 활성화됨</p>', unsafe_allow_html=True)
+        else:
+            st.markdown('<p style="color:#ef4444;font-size:0.75rem;">API Key 미설정 (.env 확인)</p>', unsafe_allow_html=True)
+    else:
+        st.markdown('<p style="color:var(--text-muted);font-size:0.75rem;">로컬 모델 사용 중</p>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-header" style="margin-top:16px;">평가 설정</div>', unsafe_allow_html=True)
     if st.session_state.openai_key:
         st.markdown('<p style="color:#10b981;font-size:0.75rem;">LLM 평가 활성화됨</p>', unsafe_allow_html=True)
     else:
@@ -331,7 +364,7 @@ with st.sidebar:
 
 
 st.markdown('<div class="main-title">국룰:RFP 맥잡기</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-caption">Phi-4-mini · LoRA · ChromaDB · BM25 · KURE-v1</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="sub-caption">{provider_options.get(st.session_state.llm_provider, "로컬")} · ChromaDB · BM25 · KURE-v1</div>', unsafe_allow_html=True)
 
 chat_col, metric_col = st.columns([3, 1])
 
@@ -405,9 +438,17 @@ with chat_col:
                     context_text  = ""
 
                     step_icons = {1: "1. 쿼리 재작성", 2: "2. 문서 검색", 3: "3. Reranker", 4: "4. 답변 생성"}
+                    key_map  = {"openai": "openai_key", "gemini": "gemini_key", "openrouter": "openrouter_key", "local": None}
+                    key_attr = key_map.get(st.session_state.llm_provider)
+                    api_key  = st.session_state[key_attr] if key_attr else ""
+                    llm_cfg  = {
+                        "provider": st.session_state.llm_provider,
+                        "api_key" : api_key,
+                        "model"   : st.session_state.get("llm_model", ""),
+                    }
                     with st.status("RAG 처리 중...", expanded=True) as status:
                         current_step = 0
-                        for chunk in stream_chat(prompt, history=history if history else None):
+                        for chunk in stream_chat(prompt, history=history if history else None, llm_config=llm_cfg):
                             if chunk["type"] == "progress":
                                 step    = chunk["data"]["step"]
                                 message = chunk["data"]["message"]

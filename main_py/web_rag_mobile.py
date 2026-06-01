@@ -7,6 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import LOG_PATH
 from api_client import stream_chat, is_server_ready
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # 로그 설정
 logging.basicConfig(
@@ -103,6 +105,10 @@ section[data-testid="stSidebar"]  { display: none !important; }
 # Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "llm_provider" not in st.session_state:
+    st.session_state.llm_provider = "local"
+if "llm_model" not in st.session_state:
+    st.session_state.llm_model = ""
 
 # 서버 상태 확인
 if not is_server_ready():
@@ -113,9 +119,28 @@ if not is_server_ready():
 st.markdown('<div class="main-title">국룰:RFP 맥잡기</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-caption">RFP 문서 기반 AI 어시스턴트</div>', unsafe_allow_html=True)
 
-if st.button("새 대화", use_container_width=True):
-    st.session_state.messages = []
-    st.rerun()
+# LLM 선택
+provider_options = {
+    "local"      : "로컬 (Phi-4)",
+    "openai"     : "GPT-4o-mini",
+    "gemini"     : "Gemini 1.5 Flash",
+    "openrouter" : "OpenRouter",
+}
+col_model, col_new = st.columns([3, 1])
+with col_model:
+    selected = st.selectbox(
+        "모델",
+        options=list(provider_options.keys()),
+        format_func=lambda x: provider_options[x],
+        index=list(provider_options.keys()).index(st.session_state.llm_provider),
+        label_visibility="collapsed",
+    )
+    if selected != st.session_state.llm_provider:
+        st.session_state.llm_provider = selected
+with col_new:
+    if st.button("새 대화", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
 
 # 이전 대화 출력
 for message in st.session_state.messages:
@@ -140,8 +165,11 @@ if prompt := st.chat_input("질문하세요"):
             answer_chunks = []
             sources_text  = ""
 
+            key_map = {"openai": os.getenv("OPENAI_API_KEY",""), "gemini": os.getenv("GEMINI_API_KEY",""), "openrouter": os.getenv("OPENROUTER_API_KEY",""), "local": ""}
+            api_key = key_map.get(st.session_state.llm_provider, "")
+            llm_cfg = {"provider": st.session_state.llm_provider, "api_key": api_key, "model": st.session_state.llm_model}
             with st.status("검색 중...", expanded=False) as status:
-                for chunk in stream_chat(prompt, history=history if history else None):
+                for chunk in stream_chat(prompt, history=history if history else None, llm_config=llm_cfg):
                     if chunk["type"] == "meta":
                         pass
                     elif chunk["type"] == "chunk":

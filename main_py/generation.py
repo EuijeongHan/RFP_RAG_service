@@ -40,12 +40,28 @@ TYPE_INSTRUCTIONS = {
 """,
     "compare": """
 [답변 형식 - 복수 기관/사업 비교]
-- 기관별로 섹션을 나눠 정리합니다. (### 기관명)
-- 각 기관의 사업명, 예산, 기간, 주요 내용을 항목별로 정리합니다.
-- 마지막에 비교 요약 표를 작성합니다. (| 항목 | 기관A | 기관B |)
-- 문서에 없는 기관의 정보는 "문서 없음"으로 표기합니다.
-- 수치는 반드시 원문 그대로 인용합니다. 임의로 변환하지 마세요.
-- 같은 내용을 반복하지 마세요.
+반드시 아래 형식을 그대로 따르세요.
+
+### [기관명A]
+- 사업명: (문서에서 그대로)
+- 예산: (문서에서 그대로, 변환 금지)
+- 기간: (문서에서 그대로)
+- 주요 내용: (1~2줄)
+
+### [기관명B]
+- 사업명:
+- 예산:
+- 기간:
+- 주요 내용:
+
+| 항목 | 기관명A | 기관명B |
+|------|---------|---------|
+| 예산 | | |
+| 기간 | | |
+
+- 문서에 없는 항목은 반드시 "문서 없음"으로 표기합니다.
+- 수치는 문서 원문 그대로만 씁니다. 억원 단위 변환 금지.
+- 같은 내용 반복 금지.
 """,
     "followup": """
 [답변 형식 - 후속 질문]
@@ -133,6 +149,140 @@ def build_prompt(query, rewritten_query, retrieval_result, history=None, query_t
     messages.append({"role": "user", "content": user_content})
     return system_prompt, messages
 
+
+
+LLM_PROVIDERS = {
+    "local"    : {"name": "로컬 (Phi-4-mini)", "model": None},
+    "openai"   : {"name": "OpenAI GPT-4o-mini", "model": "gpt-4o-mini"},
+    "gemini"   : {"name": "Google Gemini 1.5 Flash", "model": "gemini-1.5-flash"},
+    "openrouter": {"name": "OpenRouter", "model": "openai/gpt-4o-mini"},
+}
+
+class _APIMessagesNamespace:
+    def __init__(self, provider: str, api_key: str, model: str = None):
+        self._provider = provider
+        self._api_key  = api_key
+        self._model    = model
+
+    def create(self, model, max_tokens, system, messages):
+        if self._provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=self._api_key)
+            msgs = [{"role": "system", "content": system}] + messages
+            resp = client.chat.completions.create(
+                model=self._model or "gpt-4o-mini",
+                messages=msgs,
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            text = resp.choices[0].message.content.strip()
+            return _MessagesResponse(text)
+
+        elif self._provider == "gemini":
+            from google import genai as gai
+            from google.genai import types
+            client = gai.Client(api_key=self._api_key)
+            msgs_gemini = [{"role": "user", "parts": [{"text": system}]}]
+            msgs_gemini.append({"role": "model", "parts": [{"text": "알겠습니다."}]})
+            for msg in messages:
+                role = "user" if msg["role"] == "user" else "model"
+                msgs_gemini.append({"role": role, "parts": [{"text": msg["content"]}]})
+            resp = client.models.generate_content(
+                model=self._model or "gemini-2.5-flash",
+                contents=msgs_gemini,
+                config=types.GenerateContentConfig(max_output_tokens=max(max_tokens, 2000), temperature=0.2),
+            )
+            return _MessagesResponse(resp.text.strip())
+
+        elif self._provider == "openrouter":
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=self._api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            msgs = [{"role": "system", "content": system}] + messages
+            resp = client.chat.completions.create(
+                model=self._model or "openai/gpt-4o-mini",
+                messages=msgs,
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            text = resp.choices[0].message.content.strip()
+            return _MessagesResponse(text)
+
+    def stream(self, model, max_tokens, system, messages):
+        return _APIStreamContext(self._provider, self._api_key, self._model, system, messages, max_tokens)
+
+
+class _APIStreamContext:
+    def __init__(self, provider, api_key, model, system, messages, max_tokens):
+        self._provider   = provider
+        self._api_key    = api_key
+        self._model      = model
+        self._system     = system
+        self._messages   = messages
+        self._max_tokens = max_tokens
+
+    def __enter__(self):
+        return self
+
+    @property
+    def text_stream(self):
+        if self._provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=self._api_key)
+            msgs = [{"role": "system", "content": self._system}] + self._messages
+            with client.chat.completions.stream(
+                model=self._model or "gpt-4o-mini",
+                messages=msgs,
+                max_tokens=self._max_tokens,
+                temperature=0.2,
+            ) as stream:
+                for text in stream.text_stream:
+                    if text:
+                        yield text
+
+        elif self._provider == "gemini":
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=self._api_key)
+            msgs_gemini = [{"role": "user", "parts": [{"text": self._system}]}]
+            msgs_gemini.append({"role": "model", "parts": [{"text": "알겠습니다."}]})
+            for msg in self._messages:
+                role = "user" if msg["role"] == "user" else "model"
+                msgs_gemini.append({"role": role, "parts": [{"text": msg["content"]}]})
+            for chunk in client.models.generate_content_stream(
+                model=self._model or "gemini-2.5-flash",
+                contents=msgs_gemini,
+                config=types.GenerateContentConfig(max_output_tokens=max(self._max_tokens, 2000), temperature=0.2),
+            ):
+                if chunk.text:
+                    yield chunk.text
+
+        elif self._provider == "openrouter":
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=self._api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            msgs = [{"role": "system", "content": self._system}] + self._messages
+            with client.chat.completions.stream(
+                model=self._model or "openai/gpt-4o-mini",
+                messages=msgs,
+                max_tokens=self._max_tokens,
+                temperature=0.2,
+            ) as stream:
+                for text in stream.text_stream:
+                    if text:
+                        yield text
+
+    def __exit__(self, *args):
+        pass
+
+
+class _ExternalAPIClient:
+    def __init__(self, provider: str, api_key: str, model: str = None):
+        self.messages = _APIMessagesNamespace(provider, api_key, model)
 
 # Gemma4 클라이언트 래퍼
 class _MessagesResponse:
@@ -223,8 +373,16 @@ class _GemmaClient:
 class BidMateGenerator:
     def __init__(self, llm_client, get_context_fn):
         self.client      = llm_client
+        self._base_client = llm_client  # 로컬 모델 클라이언트 보관
         self.get_context = get_context_fn
         self._call_count = 0
+
+    def set_llm_config(self, provider: str, api_key: str, model: str = None):
+        """런타임 LLM 전환 - local이면 로컬 모델로 복귀"""
+        if provider == "local" or not api_key:
+            self.client = self._base_client
+        else:
+            self.client = _ExternalAPIClient(provider, api_key, model)
 
     def _rewrite_query(self, query: str, history=None) -> str:
         import re

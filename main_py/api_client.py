@@ -5,8 +5,10 @@ from typing import Generator
 API_BASE = "http://localhost:2026"
 
 
-def stream_chat(query: str, history: list = None) -> Generator[dict, None, None]:
+def stream_chat(query: str, history: list = None, llm_config: dict = None) -> Generator[dict, None, None]:
     payload = {"query": query, "history": history or []}
+    if llm_config:
+        payload["llm_config"] = llm_config
     with requests.post(
         f"{API_BASE}/chat/stream",
         json=payload,

@@ -57,14 +57,20 @@ async def startup():
 
 
 # 요청 모델
-class ChatRequest(BaseModel):
-    query  : str
-    history: list = []
+class LLMConfig(BaseModel):
+    provider: str = "local"
+    api_key : str = ""
+    model   : str = ""
 
+class ChatRequest(BaseModel):
+    query     : str
+    history   : list = []
+    llm_config: LLMConfig = LLMConfig()
 
 class AskRequest(BaseModel):
-    query  : str
-    history: list = []
+    query     : str
+    history   : list = []
+    llm_config: LLMConfig = LLMConfig()
 
 
 class MetricsRequest(BaseModel):
@@ -75,10 +81,12 @@ class MetricsRequest(BaseModel):
 
 
 # 스트리밍
-async def stream_generator(query: str, history: list) -> AsyncGenerator[str, None]:
+async def stream_generator(query: str, history: list, llm_config: dict = None) -> AsyncGenerator[str, None]:
     loop = asyncio.get_event_loop()
 
     def run_stream():
+        if llm_config:
+            svc.set_llm_config(**llm_config)
         chunks = []
         for chunk in svc.stream(query, history=history if history else None):
             chunks.append(chunk)
@@ -101,8 +109,9 @@ async def chat_stream(req: ChatRequest):
     if not svc:
         raise HTTPException(status_code=503, detail="서비스 초기화 중입니다.")
     logging.info(f"[API][STREAM] query={req.query[:50]}")
+    cfg = {"provider": req.llm_config.provider, "api_key": req.llm_config.api_key, "model": req.llm_config.model}
     return StreamingResponse(
-        stream_generator(req.query, req.history),
+        stream_generator(req.query, req.history, llm_config=cfg),
         media_type="text/event-stream",
     )
 
@@ -113,8 +122,9 @@ async def chat_ask(req: AskRequest):
         raise HTTPException(status_code=503, detail="서비스 초기화 중입니다.")
     logging.info(f"[API][ASK] query={req.query[:50]}")
     loop = asyncio.get_event_loop()
+    cfg = {"provider": req.llm_config.provider, "api_key": req.llm_config.api_key, "model": req.llm_config.model}
     result = await loop.run_in_executor(
-        None, lambda: svc.ask(req.query, history=req.history if req.history else None)
+        None, lambda: svc.ask(req.query, history=req.history if req.history else None, llm_config=cfg)
     )
     return {
         "answer"          : result["answer"],
