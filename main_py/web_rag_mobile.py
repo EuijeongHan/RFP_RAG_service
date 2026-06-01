@@ -20,14 +20,14 @@ logging.basicConfig(
 )
 
 st.set_page_config(
-    page_title="국룰:RFP 맥잡기",
+    page_title="국룰 : AI와 함께 공공입찰 맥잡기",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap');
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
 :root {
     --bg-primary  : #0a0f1e;
@@ -41,14 +41,14 @@ st.markdown("""
 html, body, .stApp {
     background-color: var(--bg-primary) !important;
     color: var(--text-primary) !important;
-    font-family: 'Noto Sans KR', sans-serif !important;
+    font-family: 'Pretendard', sans-serif !important;
 }
 
 section[data-testid="stSidebar"]  { display: none !important; }
 [data-testid="collapsedControl"]  { display: none !important; }
 
 .main-title {
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
     font-size: 1.3rem;
     font-weight: 700;
     color: #cbd5e1;
@@ -59,7 +59,7 @@ section[data-testid="stSidebar"]  { display: none !important; }
 .sub-caption {
     font-size: 0.7rem;
     color: var(--text-muted);
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
     margin-bottom: 1rem;
 }
 
@@ -88,7 +88,7 @@ section[data-testid="stSidebar"]  { display: none !important; }
     color: white !important;
     border: none !important;
     border-radius: 8px !important;
-    font-family: 'Noto Sans KR', sans-serif !important;
+    font-family: 'Pretendard', sans-serif !important;
 }
 .stButton > button:hover {
     background: #1d4ed8 !important;
@@ -116,7 +116,7 @@ if not is_server_ready():
     st.stop()
 
 # 타이틀
-st.markdown('<div class="main-title">국룰:RFP 맥잡기</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">국룰 : AI와 함께 공공입찰 맥잡기</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-caption">RFP 문서 기반 AI 어시스턴트</div>', unsafe_allow_html=True)
 
 # LLM 선택

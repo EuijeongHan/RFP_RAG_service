@@ -94,14 +94,14 @@ JSON 형식:
 
 
 st.set_page_config(
-    page_title="국룰:RFP 맥잡기",
+    page_title="국룰 : AI와 함께 공공입찰 맥잡기",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap');
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
 :root {
     --bg-primary   : #0a0f1e;
@@ -119,7 +119,7 @@ st.markdown("""
 html, body, .stApp {
     background-color: var(--bg-primary) !important;
     color: var(--text-primary) !important;
-    font-family: 'Noto Sans KR', sans-serif !important;
+    font-family: 'Pretendard', sans-serif !important;
 }
 
 section[data-testid="stSidebar"] {
@@ -129,7 +129,7 @@ section[data-testid="stSidebar"] {
 section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
 
 .main-title {
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
     font-size: 1.8rem;
     font-weight: 700;
     color: #cbd5e1;
@@ -142,7 +142,7 @@ section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
     color: var(--text-muted);
     margin-top: -0.8rem;
     margin-bottom: 1rem;
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
 }
 
 .metric-card {
@@ -167,12 +167,12 @@ section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
 }
 .metric-value {
     font-size: 1.4rem;
     font-weight: 700;
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
 }
 .metric-bar {
     height: 4px;
@@ -198,7 +198,7 @@ section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
     color: white !important;
     border: none !important;
     border-radius: 8px !important;
-    font-family: 'Noto Sans KR', sans-serif !important;
+    font-family: 'Pretendard', sans-serif !important;
     transition: all 0.2s !important;
 }
 .stButton > button:hover {
@@ -230,7 +230,7 @@ section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
 }
 .stTabs [data-baseweb="tab"] {
     color: var(--text-muted) !important;
-    font-family: 'Noto Sans KR', sans-serif !important;
+    font-family: 'Pretendard', sans-serif !important;
 }
 .stTabs [aria-selected="true"] {
     color: var(--accent-light) !important;
@@ -244,7 +244,7 @@ hr { border-color: var(--border) !important; }
     text-transform: uppercase;
     letter-spacing: 1.2px;
     color: var(--text-muted);
-    font-family: 'Space Mono', monospace;
+    font-family: 'Pretendard', sans-serif;
     padding: 8px 0 6px 0;
     border-bottom: 1px solid var(--border);
     margin-bottom: 10px;
@@ -287,8 +287,6 @@ if not is_server_ready():
     st.stop()
 
 with st.sidebar:
-    st.markdown('<div class="main-title">국룰:RFP 맥잡기</div>', unsafe_allow_html=True)
-
     if st.button("+ 새 대화", use_container_width=True):
         if st.session_state.messages:
             save_session(st.session_state.session_id, st.session_state.messages)
@@ -363,7 +361,7 @@ with st.sidebar:
         st.markdown('<p style="color:var(--text-muted);font-size:0.75rem;">임베딩 기반 평가 사용 중</p>', unsafe_allow_html=True)
 
 
-st.markdown('<div class="main-title">국룰:RFP 맥잡기</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">국룰 : AI와 함께 공공입찰 맥잡기</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="sub-caption">{provider_options.get(st.session_state.llm_provider, "로컬")} · ChromaDB · BM25 · KURE-v1</div>', unsafe_allow_html=True)
 
 chat_col, metric_col = st.columns([3, 1])
