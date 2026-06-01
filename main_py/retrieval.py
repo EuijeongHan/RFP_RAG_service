@@ -37,9 +37,16 @@ def _normalize_chunk(c: dict) -> dict:
         meta["year"] = str(meta["year"])
     meta.setdefault("has_table",  False)
     meta.setdefault("has_number", False)
+    chunk_text = c.get("chunk_text", c.get("text", ""))
+    summary    = c.get("text", "")  # 예산/기간 요약
+    if summary and summary != chunk_text and "사업예산" in summary:
+        full_text = summary + "\n" + chunk_text
+    else:
+        full_text = chunk_text
+        full_text = chunk_text
     return {
         "chunk_id": c.get("chunk_id", ""),
-        "text"    : c.get("chunk_text", c.get("text", "")),
+        "text"    : full_text,
         "metadata": meta,
     }
 
@@ -86,11 +93,52 @@ def fuzzy_match_agency(query: str, threshold: float = 0.6):
     return best_match if best_score >= threshold else None
 
 
+
+def fuzzy_normalize_query(query: str, threshold: int = 80) -> str:
+    """
+    rapidfuzz로 쿼리 내 오타 토큰을 ALL_AGENCIES 및 주요 키워드와 매칭해 보정.
+    threshold: 유사도 점수 0~100, 높을수록 엄격
+    """
+    try:
+        from rapidfuzz import process, fuzz
+    except ImportError:
+        return query
+
+    if not ALL_AGENCIES:
+        return query
+
+    # 주요 프로젝트 키워드 사전
+    keyword_pool = list(ALL_AGENCIES) + [
+        "전자조달", "그룹웨어", "시스템", "구축", "용역", "예산", "기간",
+        "스마트", "프로젝트", "관개", "통합정보시스템", "ERP", "KOICA",
+        "학사포털", "출입통제", "보안", "인프라", "클라우드",
+    ]
+
+    tokens = query.split()
+    result_tokens = []
+    for token in tokens:
+        # 짧은 토큰, 영문, 숫자는 스킵
+        if len(token) <= 2 or token.isascii():
+            result_tokens.append(token)
+            continue
+        match = process.extractOne(token, keyword_pool, scorer=fuzz.ratio)
+        if match and match[1] >= threshold and match[0] != token:
+            result_tokens.append(match[0])
+        else:
+            result_tokens.append(token)
+    return " ".join(result_tokens)
+
 def parse_metadata_filter(query: str) -> dict:
     filters = {}
-    agency = fuzzy_match_agency(query)
-    if agency:
-        filters["agency"] = agency
+    # 복수 기관 감지 - 2개 이상이면 agency 필터 제거 (B타입 비교 쿼리)
+    agency_pat = r"한국[가-힣]{1,6}공사|[가-힣]{2,8}공단|[가-힣]{2,8}은행|[가-힣]{2,8}공사|[가-힣]{2,8}연구원|[가-힣]{2,8}대학교|[가-힣]{2,8}의료원"
+    found_agencies = list(dict.fromkeys(re.findall(agency_pat, query)))
+    if len(found_agencies) >= 2:
+        pass  # 복수 기관 비교 시 agency 필터 없음
+    else:
+        agency = fuzzy_match_agency(query)
+        if agency:
+            filters["agency"] = agency
     year = extract_year(query)
     if year:
         filters["year"] = year
@@ -113,16 +161,19 @@ class BidMateRetriever:
     def _build_chroma_where(self, meta_filter: dict):
         if not meta_filter:
             return None
+        # ChromaDB 실제 키 매핑 (agency → organization_cleaned)
+        key_map = {"agency": "organization_cleaned"}
         conditions = []
         for key, val in meta_filter.items():
+            chroma_key = key_map.get(key, key)
             if not val:
                 continue
             if isinstance(val, dict):
-                conditions.append({key: val})
+                conditions.append({chroma_key: val})
             elif isinstance(val, list):
-                conditions.append({key: {"$in": [str(v) for v in val]}})
+                conditions.append({chroma_key: {"$in": [str(v) for v in val]}})
             else:
-                conditions.append({key: {"$eq": str(val)}})
+                conditions.append({chroma_key: {"$eq": str(val)}})
         if not conditions:
             return None
         return conditions[0] if len(conditions) == 1 else {"$and": conditions}
@@ -196,18 +247,34 @@ class BidMateRetriever:
         return [self.bm25_chunk_ids[i] for i in top_indices if scores[i] > 0]
 
     def _multi_retrieve(self, queries, where, allowed_indices, original_query=""):
-        all_queries    = ([original_query] if original_query else []) + list(queries)
+        import re as _re
+        agency_pat = r"한국[가-힣]{1,6}공사|[가-힣]{2,8}공단|[가-힣]{2,8}은행|[가-힣]{2,8}공사|[가-힣]{2,8}연구원|[가-힣]{2,8}대학교|[가-힣]{2,8}의료원"
         dense_ids_all, sparse_ids_all = [], []
         seen_dense, seen_sparse = set(), set()
-        for q in all_queries:
-            for cid in self._dense_search(q, where):
+        # 각 sub_query별로 해당 기관 필터 개별 적용
+        for q in queries:
+            agencies = _re.findall(agency_pat, q)
+            if agencies:
+                q_filter = {"agency": agencies[0]}
+                q_where = self._build_chroma_where(q_filter)
+                q_allowed = self._filter_bm25_ids(q_filter)
+            else:
+                q_where = where
+                q_allowed = allowed_indices
+            for cid in self._dense_search(q, q_where):
                 if cid not in seen_dense:
                     dense_ids_all.append(cid)
                     seen_dense.add(cid)
-            for cid in self._sparse_search(q, allowed_indices):
+            for cid in self._sparse_search(q, q_allowed):
                 if cid not in seen_sparse:
                     sparse_ids_all.append(cid)
                     seen_sparse.add(cid)
+        # original_query는 필터 없이 보완 검색
+        if original_query:
+            for cid in self._dense_search(original_query, None):
+                if cid not in seen_dense:
+                    dense_ids_all.append(cid)
+                    seen_dense.add(cid)
         return dense_ids_all, sparse_ids_all
 
     def _rrf_fusion(self, dense_ids, sparse_ids):
@@ -300,7 +367,27 @@ class BidMateRetriever:
         boosted = self._soft_boost(ranked)
         boosted = self._mmr_rerank(boosted, query=query)
         boosted = self._rerank(boosted, query=query)
-        top5    = boosted[:TOP_K]
+        # B타입 비교: sub_queries가 2개 이상이면 기관별 균등 배분
+        if len(sub_queries) > 1:
+            import re as _re
+            agency_pat = r"한국[가-힣]{1,6}공사|[가-힣]{2,8}공단|[가-힣]{2,8}은행|[가-힣]{2,8}연구원|[가-힣]{2,8}대학교|[가-힣]{2,8}의료원"
+            per_agency = max(2, TOP_K // len(sub_queries))
+            agency_counts = {}
+            top5 = []
+            for cid, score in boosted:
+                meta = self.chunk_meta_map.get(cid, {})
+                ag = meta.get("agency", meta.get("organization_cleaned", ""))
+                cnt = agency_counts.get(ag, 0)
+                if cnt < per_agency:
+                    top5.append((cid, score))
+                    agency_counts[ag] = cnt + 1
+                if len(top5) >= TOP_K:
+                    break
+        else:
+            top5 = boosted[:TOP_K]
+        # D타입 함정질문 대응: 최고 score 0.25 미만이면 문서 없음 처리
+        if top5 and top5[0][1] < 0.25:
+            top5 = []
         return {
             "context"    : self._build_context(top5),
             "top_chunks" : [{"rank": i+1, "chunk_id": cid, "boosted_score": score,
@@ -388,11 +475,17 @@ def _get_hwp_context(query: str, top_chunks: list, embed_model, top_docs: int = 
     return "\n\n---\n\n".join(contexts)
 
 def get_context(query: str, history=None, meta_filter=None) -> dict:
+    import re as _re
     effective_query = query
     if history:
         prev_user = [h["content"] for h in history if h["role"] == "user"]
         if prev_user:
-            effective_query = f"{prev_user[-1]} {query}"
+            agency_pat = r"한국[가-힣]{1,6}공사|[가-힣]{2,8}공단|[가-힣]{2,8}은행|[가-힣]{2,8}공사|[가-힣]{2,8}연구원|[가-힣]{2,8}대학교|[가-힣]{2,8}의료원"
+            curr_agency = _re.findall(agency_pat, query)
+            prev_agency = _re.findall(agency_pat, prev_user[-1])
+            # 현재 쿼리에 기관명 없을 때만 이전 기관명 보완 (전체 질문 붙이지 않음)
+            if prev_agency and not curr_agency:
+                effective_query = prev_agency[0] + " " + query
     result = retriever.retrieve(effective_query, meta_filter=meta_filter)
 
     context = result["context"]

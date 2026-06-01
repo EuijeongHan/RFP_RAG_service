@@ -27,7 +27,8 @@ BASE_SYSTEM_PROMPT = """당신은 공공 입찰 RFP 문서 분석 어시스턴�
 규칙3: 문서에 답이 없으면 반드시 "제공된 문서에서 확인할 수 없습니다"라고만 답하세요.
 규칙4: 문서에 없는 내용을 추측하거나 지어내는 것은 절대 금지입니다.
 규칙5: 답변은 간결하게 핵심만 작성하세요.
-"""
+규칙6: 전화번호, 이메일, 개인정보, 비밀번호 등은 문서에 명시된 경우에만 답변하세요. 문서에 없으면 절대 생성하지 마세요.
+규칙7: 문서에서 찾은 내용이 질문과 실제로 관련 있는지 반드시 확인하세요. 관련 없으면 "제공된 문서에서 확인할 수 없습니다"라고 답하세요.
 """
 
 TYPE_INSTRUCTIONS = {
@@ -48,9 +49,11 @@ TYPE_INSTRUCTIONS = {
 """,
     "followup": """
 [답변 형식 - 후속 질문]
-- 이전 대화의 맥락을 바탕으로 현재 질문에 집중해서 답변합니다.
-- 이전 답변을 반복하지 말고, 현재 질문이 요구하는 새로운 정보만 답변합니다.
-- 현재 질문에 해당하는 내용이 [검색된 문서]에 없으면 "제공된 문서에서 확인할 수 없습니다"라고 명시합니다.
+- 이전 대화 맥락을 참고하되, 반드시 [검색된 문서]의 내용을 기준으로 답변합니다.
+- 이전 답변 내용을 절대 반복하지 마세요. 현재 질문이 요구하는 새로운 정보만 답변합니다.
+- 현재 질문의 키워드가 [검색된 문서]에 있으면 그 내용만 답변합니다.
+- 현재 질문에 해당하는 내용이 [검색된 문서]에 없으면 반드시 "제공된 문서에서 확인할 수 없습니다"라고만 답하세요.
+- 답변은 2~5문장으로 간결하게 작성합니다.
 """,
 }
 
@@ -96,6 +99,15 @@ def format_sources(sources: list) -> str:
     return "\n".join(lines)
 
 
+
+def _trim_assistant_content(content: str, max_chars: int = 200) -> str:
+    import re as _re
+    content = _re.sub(r'\[검색된 문서\].*?---', '', content, flags=_re.DOTALL).strip()
+    content = _re.sub(r'\[출처\].*$', '', content, flags=_re.DOTALL).strip()
+    if len(content) > max_chars:
+        content = content[:max_chars] + "..."
+    return content
+
 def build_prompt(query, rewritten_query, retrieval_result, history=None, query_type="single"):
     sub_queries = retrieval_result.get("sub_queries", [])
     if len(sub_queries) > 1:
@@ -113,7 +125,11 @@ def build_prompt(query, rewritten_query, retrieval_result, history=None, query_t
     messages = []
     if history:
         for h in history:
-            messages.append({"role": h["role"], "content": h["content"]})
+            if h["role"] == "user":
+                messages.append({"role": "user", "content": h["content"]})
+            elif h["role"] == "assistant":
+                trimmed = _trim_assistant_content(h["content"])
+                messages.append({"role": "assistant", "content": trimmed})
     messages.append({"role": "user", "content": user_content})
     return system_prompt, messages
 
@@ -213,14 +229,70 @@ class BidMateGenerator:
     def _rewrite_query(self, query: str, history=None) -> str:
         import re
         rewritten = query
+
+        # 구어체 → 공문서 용어 정규화
+        # 오타 사전 (E타입 대응)
+        typo_dict = {
+            "코이까": "KOICA", "전쟈죠달": "전자조달", "전쟈": "전자",
+            "예싼": "예산", "에산": "예산", "에싼": "예산",
+            "뱡송": "방송", "씨스탬": "시스템", "씨스템": "시스템",
+            "시스탬": "시스템", "구쭉": "구축", "구쭉": "구축",
+            # 기관명 오타
+            "코이까": "KOICA", "아시아물위원훼": "아시아물위원회",
+            "물위원훼": "물위원회", "그렌드코리아레져": "그랜드코리아레저",
+            "그렌드": "그랜드",
+            # 지명 오타
+            "키르기즈쓰탄": "키르기스탄", "우즈벡": "우즈베키스탄",
+            "우즈백": "우즈베키스탄",
+            # 용어 오타 (긴 것 먼저)
+            "전쟈죠달": "전자조달", "구룹웨에": "그룹웨어", "구룹웨어": "그룹웨어",
+            "시쓰탬": "시스템", "씨쓰템": "시스템", "시쓰템": "시스템",
+            "씨스탬": "시스템", "씨스템": "시스템",
+            "관계시스템": "관개시스템",
+            # 단어 오타
+            "예싼": "예산", "에산": "예산", "슴아트": "스마트",
+            "기대효괍": "기대효과", "츄진": "추진", "뱡송": "방송",
+            "레져": "레저", "구쭉": "구축", "프로젝": "프로젝트",
+            "플젝": "프로젝트", "베네핏": "benefit",
+            # 구어체/축약
+            "알려주새요": "알려주세요", "있습니가": "있습니까",
+            "고대": "고려대학교",
+        }
+        # 긴 문자열 먼저 치환 (이중치환 방지)
+        for typo, correct in sorted(typo_dict.items(), key=lambda x: -len(x[0])):
+            rewritten = rewritten.replace(typo, correct)
+
+        # rapidfuzz 기반 퍼지 토큰 보정
+        try:
+            from retrieval import fuzzy_normalize_query
+            rewritten = fuzzy_normalize_query(rewritten, threshold=82)
+        except Exception:
+            pass
+
+        colloquial_map = [
+            (r"비교(해줘|해주세요|해봐|해봐줘|하면|하자)?", ""),
+            (r"알려(줘|주세요|줘요)?", ""),
+            (r"가르쳐(줘|주세요)?", ""),
+            (r"얼마(야|예요|이에요|인가요|\?)?", "예산 규모"),
+            (r"얼마나\s*(돼|되나요|됩니까|\?)?", "규모"),
+            (r"어디(야|예요|이에요|인가요|\?)?", "소재지"),
+            (r"언제(야|예요|이에요|인가요|\?)?", "일정"),
+            (r"기간이?\s*(어떻게|어때|얼마나)", "사업 기간"),
+            (r"뭐(야|예요|이에요|인가요|\?)?", "내용"),
+            (r"어때(요)?", "현황"),
+        ]
+        for pattern, replacement in colloquial_map:
+            rewritten = re.sub(pattern, replacement, rewritten)
+
+        # 히스토리에서 기관명 보완
         if history:
             for h in reversed(history[-6:]):
                 if h["role"] == "user":
                     agency_pat = r"한국[가-힣]{1,6}공사|[가-힣]{2,8}공단|[가-힣]{2,8}은행|[가-힣]{2,8}공사|[가-힣]{2,8}연구원|[가-힣]{2,8}대학교|[가-힣]{2,8}의료원"
                     prev_agency = re.findall(agency_pat, h["content"])
-                    curr_agency = re.findall(agency_pat, query)
+                    curr_agency = re.findall(agency_pat, rewritten)
                     if prev_agency and not curr_agency:
-                        rewritten = prev_agency[0] + " " + query
+                        rewritten = prev_agency[0] + " " + rewritten
                     break
         return rewritten
     def generate(self, query, history=None, meta_filter=None, verbose=False) -> dict:
