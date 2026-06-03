@@ -1,0 +1,35 @@
+PDF 원본
+   ↓
+전처리 스크립트
+   ↓
+Chunk 저장
+   ↓
+Embedding 생성
+   ↓
+FAISS 저장
+   ↓
+Streamlit은 FAISS만 로딩
+
+
+
+
+
+
+
+
+
+project/
+│
+├── app.py
+│
+├── data/
+│   ├── raw/                 # 원본 PDF
+│   │   ├── a.pdf
+│   │   └── b.pdf
+│   │
+│   └── processed/           # 전처리 결과
+│       ├── chunks.pkl
+│       └── metadata.pkl
+│
+└── scripts/
+    └── preprocess.py

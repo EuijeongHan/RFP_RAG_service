@@ -1,1 +1,27 @@
 .env
+
+.envchroma_db/
+*.pkl
+*.log
+.ipynb_checkpoints/
+
+
+# 모델 가중치 및 대용량 폴더 제외
+**/models/
+**/lora_adapter/
+**/merged_model/
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# 체크포인트 및 로그 파일 제외
+**/checkpoint-*/
+runs/
+
+# 파이썬 캐시 및 가상환경
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
