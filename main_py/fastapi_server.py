@@ -57,14 +57,20 @@ async def startup():
 
 
 # 요청 모델
-class ChatRequest(BaseModel):
-    query  : str
-    history: list = []
+class LLMConfig(BaseModel):
+    provider: str = "local"
+    api_key : str = ""
+    model   : str = ""
 
+class ChatRequest(BaseModel):
+    query     : str
+    history   : list = []
+    llm_config: LLMConfig = LLMConfig()
 
 class AskRequest(BaseModel):
-    query  : str
-    history: list = []
+    query     : str
+    history   : list = []
+    llm_config: LLMConfig = LLMConfig()
 
 
 class MetricsRequest(BaseModel):
@@ -75,17 +81,24 @@ class MetricsRequest(BaseModel):
 
 
 # 스트리밍
-async def stream_generator(query: str, history: list) -> AsyncGenerator[str, None]:
-    loop = asyncio.get_event_loop()
-
+async def stream_generator(query: str, history: list, llm_config: dict = None) -> AsyncGenerator[str, None]:
+    import queue, threading
+    q = queue.Queue()
     def run_stream():
-        chunks = []
-        for chunk in svc.stream(query, history=history if history else None):
-            chunks.append(chunk)
-        return chunks
-
-    chunks = await loop.run_in_executor(None, run_stream)
-    for chunk in chunks:
+        try:
+            if llm_config:
+                svc.set_llm_config(**llm_config)
+            for chunk in svc.stream(query, history=history if history else None):
+                q.put(chunk)
+        except Exception as e:
+            q.put({"type": "chunk", "data": f"오류: {e}"})
+        finally:
+            q.put(None)
+    threading.Thread(target=run_stream, daemon=True).start()
+    while True:
+        chunk = await asyncio.get_event_loop().run_in_executor(None, q.get)
+        if chunk is None:
+            break
         yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
 
@@ -101,8 +114,9 @@ async def chat_stream(req: ChatRequest):
     if not svc:
         raise HTTPException(status_code=503, detail="서비스 초기화 중입니다.")
     logging.info(f"[API][STREAM] query={req.query[:50]}")
+    cfg = {"provider": req.llm_config.provider, "api_key": req.llm_config.api_key, "model": req.llm_config.model}
     return StreamingResponse(
-        stream_generator(req.query, req.history),
+        stream_generator(req.query, req.history, llm_config=cfg),
         media_type="text/event-stream",
     )
 
@@ -113,8 +127,9 @@ async def chat_ask(req: AskRequest):
         raise HTTPException(status_code=503, detail="서비스 초기화 중입니다.")
     logging.info(f"[API][ASK] query={req.query[:50]}")
     loop = asyncio.get_event_loop()
+    cfg = {"provider": req.llm_config.provider, "api_key": req.llm_config.api_key, "model": req.llm_config.model}
     result = await loop.run_in_executor(
-        None, lambda: svc.ask(req.query, history=req.history if req.history else None)
+        None, lambda: svc.ask(req.query, history=req.history if req.history else None, llm_config=cfg)
     )
     return {
         "answer"          : result["answer"],
