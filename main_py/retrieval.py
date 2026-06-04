@@ -40,12 +40,14 @@ def _normalize_chunk(c: dict) -> dict:
     chunk_text = c.get("chunk_text", c.get("text", ""))
     summary    = c.get("text", "")  # 예산/기간 요약
     if summary and summary != chunk_text and "사업예산" in summary:
-        full_text = summary + "\n" + chunk_text
+        # "미확인" 제거
+        summary = summary.replace("사업기간: 미확인", "").replace("사업예산: 미확인", "").strip()
+        full_text = summary + "\n" + chunk_text if summary else chunk_text
     else:
         full_text = chunk_text
         full_text = chunk_text
     return {
-        "chunk_id": c.get("chunk_id", ""),
+        "chunk_id": c.get("chunk_id", c.get("child_id", "")),
         "text"    : full_text,
         "metadata": meta,
     }
@@ -60,6 +62,16 @@ def load_chunks() -> list:
     raw = data if isinstance(data, list) else [data]
     return [_normalize_chunk(c) for c in raw]
 
+
+
+def load_chunks_from_path(chunks_path) -> list:
+    path = Path(chunks_path)
+    if not path.exists():
+        raise FileNotFoundError(f"청크 파일 없음: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    raw = data if isinstance(data, list) else [data]
+    return [_normalize_chunk(c) for c in raw]
 
 def tokenize_ko(text: str) -> list:
     if not isinstance(text, str) or not text.strip():
@@ -147,7 +159,7 @@ def parse_metadata_filter(query: str) -> dict:
 
 class BidMateRetriever:
     def __init__(self, collection, bm25_index, bm25_chunk_ids,
-                 bm25_texts, embed_model, all_chunks, reranker=None):
+                 bm25_texts, embed_model, all_chunks, reranker=None, chroma_key_map=None):
         self.collection      = collection
         self.bm25_index      = bm25_index
         self.bm25_chunk_ids  = bm25_chunk_ids
@@ -157,12 +169,13 @@ class BidMateRetriever:
         self.chunk_text_map  = {c["chunk_id"]: c["text"]     for c in all_chunks}
         self._emb_cache: dict = {}
         self.reranker        = reranker
+        self.chroma_key_map  = chroma_key_map or {"agency": "organization_cleaned"}
 
     def _build_chroma_where(self, meta_filter: dict):
         if not meta_filter:
             return None
         # ChromaDB 실제 키 매핑 (agency → organization_cleaned)
-        key_map = {"agency": "organization_cleaned"}
+        key_map = self.chroma_key_map
         conditions = []
         for key, val in meta_filter.items():
             chroma_key = key_map.get(key, key)
@@ -386,7 +399,7 @@ class BidMateRetriever:
         else:
             top5 = boosted[:TOP_K]
         # D타입 함정질문 대응: 최고 score 0.25 미만이면 문서 없음 처리
-        if top5 and top5[0][1] < 0.25:
+        if top5 and top5[0][1] < -2:
             top5 = []
         return {
             "context"    : self._build_context(top5),
@@ -477,29 +490,49 @@ def _get_hwp_context(query: str, top_chunks: list, embed_model, top_docs: int = 
 def get_context(query: str, history=None, meta_filter=None) -> dict:
     import re as _re
     effective_query = query
+
+    # 트리플 라우팅 판별
+    is_ctype = bool(history and len(history) > 0)
+    budget_keywords = ['예산', '금액', '비용', '얼마', '사업비', '규모']
+    is_budget_query = any(kw in query for kw in budget_keywords)
+
+    if is_ctype and retriever_c is not None:
+        active_retriever = retriever_c
+        route_label = "C타입→kh_v3"
+    elif is_budget_query and not is_ctype:
+        # A타입 (예산/수치 추출) → kh_fixed_with_budget
+        active_retriever = retriever
+        route_label = "A타입→bidmate_v2"
+    elif retriever_bde is not None:
+        # B/D/E타입 → chunks_all
+        active_retriever = retriever_bde
+        route_label = "BDE타입→chunks_all"
+    else:
+        active_retriever = retriever
+        route_label = "기본→bidmate_v2"
+
     if history:
         prev_user = [h["content"] for h in history if h["role"] == "user"]
         if prev_user:
             agency_pat = r"한국[가-힣]{1,6}공사|[가-힣]{2,8}공단|[가-힣]{2,8}은행|[가-힣]{2,8}공사|[가-힣]{2,8}연구원|[가-힣]{2,8}대학교|[가-힣]{2,8}의료원"
             curr_agency = _re.findall(agency_pat, query)
             prev_agency = _re.findall(agency_pat, prev_user[-1])
-            # 현재 쿼리에 기관명 없을 때만 이전 기관명 보완 (전체 질문 붙이지 않음)
             if prev_agency and not curr_agency:
                 effective_query = prev_agency[0] + " " + query
-    result = retriever.retrieve(effective_query, meta_filter=meta_filter)
 
+    logger.info(f"[라우팅] {route_label}")
+    result = active_retriever.retrieve(effective_query, meta_filter=meta_filter)
     context = result["context"]
-
     return {
         "context"    : context,
         "sources"    : [{"rank": c["rank"], "agency": c["metadata"].get("agency",""),
                          "year": c["metadata"].get("year",""),
-                         "project": c["metadata"].get("project_name",""),
+                         "project": c["metadata"].get("project_name", c["metadata"].get("project","")),
+                         "source_file": c["metadata"].get("source_file",""),
                          "score": c["boosted_score"]} for c in result["top_chunks"]],
         "filter"     : result["meta_filter"],
         "sub_queries": result["sub_queries"],
     }
-
 
 def init_retriever() -> BidMateRetriever:
     global ALL_AGENCIES
@@ -549,3 +582,28 @@ def init_retriever() -> BidMateRetriever:
 
 # 모듈 임포트 시 자동 초기화
 retriever: BidMateRetriever = None
+
+# ── 듀얼 라우터 ──────────────────────────────────────────────
+def init_retriever_for(collection_name, chunks_path, bm25_path, chroma_key_map=None):
+    """C타입용 retriever 생성. 임베딩/리랭커는 기존 retriever와 공유."""
+    all_chunks = load_chunks_from_path(chunks_path)
+    chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+    collection = chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+    with open(bm25_path, "rb") as f:
+        bm25_data = pickle.load(f)
+    return BidMateRetriever(
+        collection=collection,
+        bm25_index=bm25_data["index"],
+        bm25_chunk_ids=bm25_data["chunk_ids"],
+        bm25_texts=bm25_data["texts"],
+        embed_model=retriever.embed_model,
+        all_chunks=all_chunks,
+        reranker=retriever.reranker,
+        chroma_key_map=chroma_key_map,
+    )
+
+retriever_c: BidMateRetriever = None
+retriever_bde: BidMateRetriever = None    # B/D/E 타입 (chunks_all)

@@ -23,7 +23,7 @@ BASE_SYSTEM_PROMPT = """당신은 공공 입찰 RFP 문서 분석 어시스턴�
 아래 규칙을 반드시 지키세요.
 
 규칙1: [검색된 문서]에 있는 내용만 답변하세요. 문서 외 지식 사용 금지.
-규칙2: 금액/날짜/기간 등 수치는 문서에 나온 숫자 그대로만 쓰세요. 계산하거나 변환하지 마세요.
+규칙2: 금액/날짜/기간 등 수치는 문서에 나온 숫자 그대로만 쓰세요. 억원 변환 절대 금지. 괄호 안 변환도 금지. 원문 숫자만 쓰세요.
 규칙3: 문서에 답이 없으면 반드시 "제공된 문서에서 확인할 수 없습니다"라고만 답하세요.
 규칙4: 문서에 없는 내용을 추측하거나 지어내는 것은 절대 금지입니다.
 규칙5: 답변은 간결하게 핵심만 작성하세요.
@@ -39,29 +39,17 @@ TYPE_INSTRUCTIONS = {
 - 수치(예산, 기간, 인원 등)는 굵게 표시합니다.
 """,
     "compare": """
-[답변 형식 - 복수 기관/사업 비교]
-반드시 아래 형식을 그대로 따르세요.
-
-### [기관명A]
-- 사업명: (문서에서 그대로)
-- 예산: (문서에서 그대로, 변환 금지)
-- 기간: (문서에서 그대로)
-- 주요 내용: (1~2줄)
-
-### [기관명B]
-- 사업명:
-- 예산:
-- 기간:
-- 주요 내용:
-
-| 항목 | 기관명A | 기관명B |
-|------|---------|---------|
-| 예산 | | |
-| 기간 | | |
-
-- 문서에 없는 항목은 반드시 "문서 없음"으로 표기합니다.
-- 수치는 문서 원문 그대로만 씁니다. 억원 단위 변환 금지.
-- 같은 내용 반복 금지.
+[복수 기관/사업 비교 답변 규칙]
+1. 질문에 언급된 각 기관별로 사업명, 예산, 기간, 주요 내용을 검색된 문서에서 찾아 정리하세요.
+2. 각 기관을 ### 기관명 헤더로 구분해 작성하세요.
+3. 마지막에 반드시 마크다운 비교표를 작성하세요. 예시:
+| 항목 | 기관A | 기관B |
+|------|-------|-------|
+| 예산 | 실제값 | 실제값 |
+| 기간 | 실제값 | 실제값 |
+4. 수치는 문서 원문 그대로 쓰세요(억원 변환 금지).
+5. 문서에 없는 항목은 "확인 불가"라고 쓰세요.
+6. 같은 내용을 반복하지 마세요.
 """,
     "followup": """
 [답변 형식 - 후속 질문]
@@ -99,20 +87,42 @@ USER_PROMPT_TEMPLATE = """[검색된 문서]
 - 재작성된 검색 쿼리: {rewritten_query}
 """
 
+# 답변 포멧
 
 def format_sources(sources: list) -> str:
-    lines = ["\n[출처]"]
-    for s in sources:
-        agency  = s.get("agency", "미상")
-        year    = s.get("year", "")
-        project = s.get("project", "")
-        score   = s.get("score", 0)
-        line = f"  [{s['rank']}] {agency}"
-        if year:    line += f" {year}"
-        if project: line += f" - {project}"
-        line += f" (score: {score:.4f})"
-        lines.append(line)
-    return "\n".join(lines)
+    if not sources:
+        return ""
+    
+    # 기관별 대표 출처 추출 (중복 기관 제거)
+    seen_agencies = set()
+    unique_sources = []
+    sorted_sources = sorted(sources, key=lambda s: s.get("score", 0), reverse=True)
+    for s in sorted_sources:
+        agency = s.get("agency", "")
+        if agency and agency not in seen_agencies:
+            seen_agencies.add(agency)
+            unique_sources.append(s)
+        elif not agency and len(unique_sources) == 0:
+            unique_sources.append(s)
+    
+    if not unique_sources:
+        unique_sources = [sorted_sources[0]]
+    
+    filenames = []
+    for src in unique_sources:
+        filename = (
+            src.get("source_file") or
+            src.get("file_name") or
+            src.get("filename") or
+            src.get("source") or
+            src.get("project") or
+            src.get("agency", "알 수 없는 파일")
+        )
+        if isinstance(filename, str) and ("/" in filename or "\\" in filename):
+            filename = Path(filename).name
+        filenames.append(filename)
+    
+    return "\n출처 : " + " / ".join(filenames)
 
 
 
@@ -166,7 +176,12 @@ class _APIMessagesNamespace:
 
     def create(self, model, max_tokens, system, messages):
         if self._provider == "openai":
-            from openai import OpenAI
+            # 1. 여기에 예외 처리를 삽입합니다.
+            try:
+                from openai import OpenAI
+            except ImportError:
+                return _MessagesResponse("OpenAI 라이브러리가 설치되지 않았습니다. 환경을 확인하거나 local 모드를 사용해주세요.")
+                
             client = OpenAI(api_key=self._api_key)
             msgs = [{"role": "system", "content": system}] + messages
             resp = client.chat.completions.create(
@@ -195,7 +210,12 @@ class _APIMessagesNamespace:
             return _MessagesResponse(resp.text.strip())
 
         elif self._provider == "openrouter":
-            from openai import OpenAI
+            # 2. OpenRouter도 내부적으로 openai 라이브러리를 사용하므로 함께 처리합니다.
+            try:
+                from openai import OpenAI
+            except ImportError:
+                return _MessagesResponse("OpenAI 라이브러리가 설치되지 않아 OpenRouter를 사용할 수 없습니다.")
+                
             client = OpenAI(
                 api_key=self._api_key,
                 base_url="https://openrouter.ai/api/v1",
@@ -229,7 +249,13 @@ class _APIStreamContext:
     @property
     def text_stream(self):
         if self._provider == "openai":
-            from openai import OpenAI
+            # 3. 스트리밍 환경에서도 가독성 있게 에러를 내뱉도록 처리합니다.
+            try:
+                from openai import OpenAI
+            except ImportError:
+                yield "OpenAI 라이브러리가 설치되지 않았습니다."
+                return
+                
             client = OpenAI(api_key=self._api_key)
             msgs = [{"role": "system", "content": self._system}] + self._messages
             with client.chat.completions.stream(
@@ -260,7 +286,12 @@ class _APIStreamContext:
                     yield chunk.text
 
         elif self._provider == "openrouter":
-            from openai import OpenAI
+            try:
+                from openai import OpenAI
+            except ImportError:
+                yield "OpenAI 라이브러리가 설치되지 않았습니다."
+                return
+                
             client = OpenAI(
                 api_key=self._api_key,
                 base_url="https://openrouter.ai/api/v1",
@@ -278,7 +309,6 @@ class _APIStreamContext:
 
     def __exit__(self, *args):
         pass
-
 
 class _ExternalAPIClient:
     def __init__(self, provider: str, api_key: str, model: str = None):
@@ -378,12 +408,16 @@ class BidMateGenerator:
         self._call_count = 0
 
     def set_llm_config(self, provider: str, api_key: str, model: str = None):
-        """런타임 LLM 전환 - local이면 로컬 모델로 복귀"""
-        if provider == "local" or not api_key:
-            self.client = self._base_client
-        else:
-            self.client = _ExternalAPIClient(provider, api_key, model)
+            """런타임 LLM 전환 - 사용자가 선택한 provider에 따라 유연하게 변경"""
+            if provider == "local" or not api_key:
+                self.client = self._base_client  # 로컬 모델(Phi-4)로 복귀
+                logger.info("LLM 구동 모드가 로컬(Phi-4)로 설정되었습니다.")
+            else:
+                # 외부 API 클라이언트(OpenAI, Gemini 등)로 전환
+                self.client = _ExternalAPIClient(provider, api_key, model)
+                logger.info(f"LLM 구동 모드가 외부 API({provider})로 전환되었습니다.")
 
+            
     def _rewrite_query(self, query: str, history=None) -> str:
         import re
         rewritten = query
@@ -454,21 +488,69 @@ class BidMateGenerator:
                     break
         return rewritten
     def generate(self, query, history=None, meta_filter=None, verbose=False) -> dict:
-        t_start = time.time()
-        latency = {}
-
-        t0 = time.time()
-        rewritten_query = self._rewrite_query(query, history)
-        latency["rewrite_ms"] = round((time.time() - t0) * 1000)
-
-        t0 = time.time()
-        retrieval_result = self.get_context(rewritten_query, history=history, meta_filter=meta_filter)
-        latency["retrieval_ms"] = round((time.time() - t0) * 1000)
-
-        if not retrieval_result.get("context", "").strip():
+            t_start = time.time()
+            latency = {}
+    
+            t0 = time.time()
+            rewritten_query = self._rewrite_query(query, history)
+            latency["rewrite_ms"] = round((time.time() - t0) * 1000)
+    
+            t0 = time.time()
+            retrieval_result = self.get_context(rewritten_query, history=history, meta_filter=meta_filter)
+            latency["retrieval_ms"] = round((time.time() - t0) * 1000)
+    
+            if not retrieval_result.get("context", "").strip():
+                return {
+                    "answer"          : "제공된 문서에서 관련 내용을 찾을 수 없습니다.",
+                    "sources"         : [],
+                    "rewritten_query" : rewritten_query,
+                    "original_query"  : query,
+                    "meta_filter"     : retrieval_result.get("filter", {}),
+                    "sub_queries"     : retrieval_result.get("sub_queries", []),
+                    "latency_ms"      : latency,
+                }
+    
+            system_prompt, messages = build_prompt(
+                query=query, rewritten_query=rewritten_query,
+                retrieval_result=retrieval_result, history=history,
+            )
+    
+            t0 = time.time()
+            try:
+                # 기본 설정된 클라이언트로 시도
+                response = self.client.messages.create(
+                    model=LLM_MODEL, max_tokens=MAX_TOKENS_GENERATE,
+                    system=system_prompt, messages=messages,
+                )
+                answer_text = response.content[0].text.strip()
+                self._call_count += 1
+            except Exception as e:
+                # 401 인증 에러나 API 키 오류가 발생할 경우 로컬 모델로 강제 긴급 우회
+                if "401" in str(e) or "api_key" in str(e).lower() or "invalid_api_key" in str(e):
+                    logger.warning(f"외부 API 인증 실패(401). 로컬 모델로 자동 우회합니다. 에러: {e}")
+                    try:
+                        response = self._base_client.messages.create(
+                            model=LLM_MODEL, max_tokens=MAX_TOKENS_GENERATE,
+                            system=system_prompt, messages=messages,
+                        )
+                        answer_text = response.content[0].text.strip()
+                    except Exception as local_err:
+                        answer_text = f"로컬 백업 모델 구동 실패: {local_err}"
+                else:
+                    logger.error(f"LLM 호출 실패: {e}")
+                    answer_text = f"답변 생성 중 오류가 발생했습니다: {e}"
+                    
+            latency["generation_ms"] = round((time.time() - t0) * 1000)
+    
+            sources_text = format_sources(retrieval_result.get("sources", []))
+            if "[출처]" not in answer_text:
+                answer_text += "\n" + sources_text
+    
+            latency["total_ms"] = round((time.time() - t_start) * 1000)
+    
             return {
-                "answer"          : "제공된 문서에서 관련 내용을 찾을 수 없습니다.",
-                "sources"         : [],
+                "answer"          : answer_text,
+                "sources"         : retrieval_result.get("sources", []),
                 "rewritten_query" : rewritten_query,
                 "original_query"  : query,
                 "meta_filter"     : retrieval_result.get("filter", {}),
@@ -476,85 +558,68 @@ class BidMateGenerator:
                 "latency_ms"      : latency,
             }
 
-        system_prompt, messages = build_prompt(
-            query=query, rewritten_query=rewritten_query,
-            retrieval_result=retrieval_result, history=history,
-        )
-
-        t0 = time.time()
-        try:
-            response = self.client.messages.create(
-                model=LLM_MODEL, max_tokens=MAX_TOKENS_GENERATE,
-                system=system_prompt, messages=messages,
-            )
-            answer_text = response.content[0].text.strip()
-            self._call_count += 1
-        except Exception as e:
-            logger.error(f"LLM 호출 실패: {e}")
-            answer_text = f"답변 생성 중 오류가 발생했습니다: {e}"
-        latency["generation_ms"] = round((time.time() - t0) * 1000)
-
-        sources_text = format_sources(retrieval_result.get("sources", []))
-        if "[출처]" not in answer_text:
-            answer_text += "\n" + sources_text
-
-        latency["total_ms"] = round((time.time() - t_start) * 1000)
-
-        return {
-            "answer"          : answer_text,
-            "sources"         : retrieval_result.get("sources", []),
-            "rewritten_query" : rewritten_query,
-            "original_query"  : query,
-            "meta_filter"     : retrieval_result.get("filter", {}),
-            "sub_queries"     : retrieval_result.get("sub_queries", []),
-            "latency_ms"      : latency,
-        }
-
     def generate_stream(self, query, history=None, meta_filter=None):
-        # 1단계: 쿼리 재작성
-        yield {"type": "progress", "data": {"step": 1, "message": "쿼리 재작성 중..."}}
-        rewritten_query = self._rewrite_query(query, history)
-        yield {"type": "progress", "data": {"step": 1, "message": f"쿼리 재작성 완료: {rewritten_query[:50]}"}}
-
-        # 2단계: 문서 검색
-        yield {"type": "progress", "data": {"step": 2, "message": "문서 검색 중..."}}
-        retrieval_result = self.get_context(rewritten_query, history=history, meta_filter=meta_filter)
-        meta_filter_info = retrieval_result.get("filter", {})
-        sub_queries      = retrieval_result.get("sub_queries", [])
-        detail = f"필터: {meta_filter_info}"
-        if len(sub_queries) > 1:
-            detail += f" | 서브쿼리 {len(sub_queries)}개"
-        yield {"type": "progress", "data": {"step": 2, "message": f"문서 검색 완료 - {detail}"}}
-
-        # 3단계: Reranker
-        yield {"type": "progress", "data": {"step": 3, "message": f"Reranker 적용 중... (후보 {len(retrieval_result.get('sources', []))}개)"}}
-
-        yield {"type": "meta", "data": {
-            "rewritten_query" : rewritten_query,
-            "filter"          : meta_filter_info,
-            "sources"         : retrieval_result.get("sources", []),
-            "sub_queries"     : sub_queries,
-            "context"         : retrieval_result.get("context", ""),
-        }}
-
-        system_prompt, messages = build_prompt(
-            query=query, rewritten_query=rewritten_query,
-            retrieval_result=retrieval_result, history=history,
-        )
-
-        # 4단계: 답변 생성
-        yield {"type": "progress", "data": {"step": 4, "message": "답변 생성 중..."}}
-
-        with self.client.messages.stream(
-            model=LLM_MODEL, max_tokens=MAX_TOKENS_GENERATE,
-            system=system_prompt, messages=messages,
-        ) as stream:
-            for text_chunk in stream.text_stream:
-                yield {"type": "chunk", "data": text_chunk}
-
-        sources_text = format_sources(retrieval_result.get("sources", []))
-        yield {"type": "done", "data": {"sources_text": sources_text}}
-
+            # 1단계: 쿼리 재작성
+            yield {"type": "progress", "data": {"step": 1, "message": "쿼리 재작성 중..."}}
+            rewritten_query = self._rewrite_query(query, history)
+            yield {"type": "progress", "data": {"step": 1, "message": f"쿼리 재작성 완료: {rewritten_query[:50]}"}}
+    
+            # 2단계: 문서 검색
+            yield {"type": "progress", "data": {"step": 2, "message": "문서 검색 중..."}}
+            retrieval_result = self.get_context(rewritten_query, history=history, meta_filter=meta_filter)
+            meta_filter_info = retrieval_result.get("filter", {})
+            sub_queries      = retrieval_result.get("sub_queries", [])
+            detail = f"필터: {meta_filter_info}"
+            if len(sub_queries) > 1:
+                detail += f" | 서브쿼리 {len(sub_queries)}개"
+            yield {"type": "progress", "data": {"step": 2, "message": f"문서 검색 완료 - {detail}"}}
+    
+            # 3단계: Reranker
+            yield {"type": "progress", "data": {"step": 3, "message": f"Reranker 적용 중... (후보 {len(retrieval_result.get('sources', []))}개)"}}
+    
+            yield {"type": "meta", "data": {
+                "rewritten_query" : rewritten_query,
+                "filter"          : meta_filter_info,
+                "sources"         : retrieval_result.get("sources", []),
+                "sub_queries"     : sub_queries,
+                "context"         : retrieval_result.get("context", ""),
+            }}
+    
+            system_prompt, messages = build_prompt(
+                query=query, rewritten_query=rewritten_query,
+                retrieval_result=retrieval_result, history=history,
+            )
+    
+            # 4단계: 답변 생성
+            yield {"type": "progress", "data": {"step": 4, "message": "답변 생성 중..."}}
+    
+            # 사용자가 선택한 클라이언트 지정을 가져옵니다.
+            active_client = self.client
+            
+            try:
+                # 먼저 유저가 세팅한 모드로 스트리밍 시도 시 선언적 컨텍스트 진입 체크
+                with active_client.messages.stream(
+                    model=LLM_MODEL, max_tokens=MAX_TOKENS_GENERATE,
+                    system=system_prompt, messages=messages,
+                ) as stream:
+                    for text_chunk in stream.text_stream:
+                        yield {"type": "chunk", "data": text_chunk}
+            except Exception as e:
+                # 스트림 도중 401 키 에러가 터지면 즉시 중단하고 로컬 백업 모델로 스위칭하여 처음부터 다시 스트리밍
+                if "401" in str(e) or "api_key" in str(e).lower() or "invalid_api_key" in str(e):
+                    yield {"type": "progress", "data": {"step": 4, "message": "⚠️ 외부 API 키 인증 실패로 로컬 모델(Phi-4)로 자동 전환하여 답변을 생성합니다."}}
+                    active_client = self._base_client
+                    with active_client.messages.stream(
+                        model=LLM_MODEL, max_tokens=MAX_TOKENS_GENERATE,
+                        system=system_prompt, messages=messages,
+                    ) as stream:
+                        for text_chunk in stream.text_stream:
+                            yield {"type": "chunk", "data": text_chunk}
+                else:
+                    yield {"type": "chunk", "data": f"\n스트리밍 생성 오류 발생: {e}"}
+    
+            sources_text = format_sources(retrieval_result.get("sources", []))
+            yield {"type": "done", "data": {"sources_text": sources_text}}
 
 def init_generator(get_context_fn) -> BidMateGenerator:
     adapter_path = str(ADAPTER_PATH)

@@ -14,6 +14,10 @@ from api_client import stream_chat, compute_metrics, is_server_ready
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
+# 🌟 [패치 추가] 잘못된 외부 API 키 주입을 차단하고 로컬 평가 모드로 유도합니다.
+os.environ["OPENAI_API_KEY"] = ""
+
+
 logging.basicConfig(
     filename=str(LOG_PATH),
     level=logging.INFO,
@@ -324,7 +328,7 @@ with st.sidebar:
         "local"      : "로컬 (Phi-4-mini)",
         "openai"     : "OpenAI GPT-4o-mini",
         "gemini"     : "Gemini 2.5 Flash",
-        "openrouter" : "OpenRouter",
+        "openrouter" : "Gemma 4 26B (google/gemma-4-26b-a4b-it:free)",
     }
     selected_provider = st.selectbox(
         "LLM 선택",
@@ -335,14 +339,6 @@ with st.sidebar:
     if selected_provider != st.session_state.llm_provider:
         st.session_state.llm_provider = selected_provider
 
-    if selected_provider == "openrouter":
-        model_input = st.text_input(
-            "OpenRouter 모델 (선택)",
-            value=st.session_state.llm_model,
-            placeholder="ex) anthropic/claude-3-haiku",
-        )
-        if model_input != st.session_state.llm_model:
-            st.session_state.llm_model = model_input
 
     if selected_provider != "local":
         key_map = {"openai": "openai_key", "gemini": "gemini_key", "openrouter": "openrouter_key"}
@@ -442,7 +438,7 @@ with chat_col:
                     llm_cfg  = {
                         "provider": st.session_state.llm_provider,
                         "api_key" : api_key,
-                        "model"   : st.session_state.get("llm_model", ""),
+                        "model"   : "google/gemma-4-26b-a4b-it:free" if st.session_state.llm_provider == "openrouter" else "",
                     }
                     with st.status("RAG 처리 중...", expanded=True) as status:
                         current_step = 0
@@ -476,22 +472,19 @@ with chat_col:
                     st.session_state.last_question = prompt
                     st.session_state.last_answer   = answer_full
 
+
                     # 평가 지표 - API 서버에서 계산
                     if context_text:
-                        if st.session_state.openai_key:
-                            metrics = compute_metrics_llm(
-                                prompt, answer_full, context_text,
-                                st.session_state.openai_key
-                            )
-                        else:
-                            metrics = compute_metrics(
-                                question=prompt,
-                                answer  =answer_full,
-                                context =context_text,
-                                sources =meta_info.get("sources", []),
-                            )
+                        # 🌟 [패치 변경] 외부 OpenAI(401에러 유발)를 절대 호출하지 않고, 
+                        # fastapi_server.py의 로컬 임베딩 모델 코드로 전량 안전 계산합니다.
+                        metrics = compute_metrics(
+                            question=prompt,
+                            answer  =answer_full,
+                            context =context_text,
+                            sources =meta_info.get("sources", []),
+                        )
                         st.session_state.last_metrics = metrics
-
+                        
                     save_session(st.session_state.session_id, st.session_state.messages)
                     logging.info("[ADMIN][ANSWER]: 완료")
                     st.rerun()

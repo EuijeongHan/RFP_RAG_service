@@ -123,8 +123,8 @@ st.markdown('<div class="sub-caption">RFP 문서 기반 AI 어시스턴트</div>
 provider_options = {
     "local"      : "로컬 (Phi-4)",
     "openai"     : "GPT-4o-mini",
-    "gemini"     : "Gemini 1.5 Flash",
-    "openrouter" : "OpenRouter",
+    "gemini"     : "Gemini 2.5 Flash",
+    "openrouter" : "gemma-4-26b-a4b-it(Openrouter)",
 }
 col_model, col_new = st.columns([3, 1])
 with col_model:

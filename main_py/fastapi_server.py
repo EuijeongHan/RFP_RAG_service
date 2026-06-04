@@ -82,18 +82,23 @@ class MetricsRequest(BaseModel):
 
 # 스트리밍
 async def stream_generator(query: str, history: list, llm_config: dict = None) -> AsyncGenerator[str, None]:
-    loop = asyncio.get_event_loop()
-
+    import queue, threading
+    q = queue.Queue()
     def run_stream():
-        if llm_config:
-            svc.set_llm_config(**llm_config)
-        chunks = []
-        for chunk in svc.stream(query, history=history if history else None):
-            chunks.append(chunk)
-        return chunks
-
-    chunks = await loop.run_in_executor(None, run_stream)
-    for chunk in chunks:
+        try:
+            if llm_config:
+                svc.set_llm_config(**llm_config)
+            for chunk in svc.stream(query, history=history if history else None):
+                q.put(chunk)
+        except Exception as e:
+            q.put({"type": "chunk", "data": f"오류: {e}"})
+        finally:
+            q.put(None)
+    threading.Thread(target=run_stream, daemon=True).start()
+    while True:
+        chunk = await asyncio.get_event_loop().run_in_executor(None, q.get)
+        if chunk is None:
+            break
         yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"
 

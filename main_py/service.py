@@ -13,6 +13,17 @@ class GenerationService:
     def _init(self):
         logger.info("Retriever 초기화 중...")
         retrieval.retriever = retrieval.init_retriever()
+        retrieval.retriever_c = retrieval.init_retriever_for(
+            collection_name="bidmate_kh_v3",
+            chunks_path="/mnt/gukrul/dataset/chunks/kh_v3.json",
+            bm25_path="/mnt/gukrul/dataset/bm25/bm25_index_kh_v3.pkl",
+        )
+        retrieval.retriever_bde = retrieval.init_retriever_for(
+            collection_name="bidmate_chunks_all",
+            chunks_path="/mnt/gukrul/dataset/chunks/chunks_all.json",
+            bm25_path="/mnt/gukrul/dataset/bm25/bm25_index_bidmate_chunks_all_A-1.pkl",
+            chroma_key_map={},
+        )
         logger.info("Generator 초기화 중...")
         generation.generator = generation.init_generator(retrieval.get_context)
         self._gen = generation.generator
