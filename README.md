@@ -34,6 +34,26 @@ The project is centered on RFP-style document analysis.
 - vLLM switch scripts for model serving experiments
 - PEFT training notebook for `google/gemma-4-E4B-it`
 
+## Presentation Flow
+
+This repository follows the same arc as the deck:
+
+1. Data processing and chunk quality decisions
+2. Retrieval and generation pipeline design
+3. Evaluation set shaping and metric checks
+4. Service deployment with Streamlit, Chainlit, and FastAPI
+
+## Key Decisions
+
+| Decision | Final choice | Why it matters |
+| --- | --- | --- |
+| Cleaning version | `v2` | Balances noise removal with context preservation |
+| Chunking strategy | `fixed_1200_200` | Stable length, lower short-chunk ratio, better retrieval precision |
+| Query routing | Dual retriever routing | Uses `kh_v3` for history-heavy Type C and `chunks_all` for Type A/B/D/E |
+| Evaluation set | `1,100 -> 579` unique samples | Removes duplicates and groups tasks into A-E categories |
+| Base runtime model | `Phi-4-mini-instruct` | Local fallback for runtime reliability |
+| Training target | `gemma-4-E4B-it` | PEFT notebook target for larger-scale experimentation |
+
 ## Architecture
 
 ```mermaid
@@ -72,6 +92,15 @@ Add project screenshots under `docs/` and reference them here.
 | `docs/streamlit-dashboard.png` | Main RAG dashboard |
 | `docs/chainlit-chat.png` | Chainlit chat UI |
 | `docs/api-metrics.png` | FastAPI evaluation or metrics output |
+
+## Sections at a Glance
+
+| Section | What it covers |
+| --- | --- |
+| Data Processing | Cleaning, chunking, metadata reconstruction |
+| Retrieval and Generation | Hybrid retrieval, reranking, prompt routing, provider switching |
+| Evaluation | Type-based eval set, faithfulness, relevancy, precision, recall |
+| Service | Streamlit, Chainlit, FastAPI, vLLM |
 
 ## Verified Snapshot
 
@@ -181,12 +210,14 @@ uvicorn main_py.fastapi_server:app --host 0.0.0.0 --port 2026
 
 ## Notebook Workflow
 
-1. Build or inspect chunk metadata
-2. Reconstruct budget/duration metadata from eval and source documents
-3. Reindex ChromaDB and BM25
-4. Train or fine-tune Gemma 4 with PEFT
-5. Switch between Phi-4, Gemma 4, and vLLM modes
-6. Use Streamlit/Chainlit/FastAPI as the front-end or backend layer
+1. Inspect file structure and raw chunks
+2. Normalize and rebuild chunk metadata
+3. Apply cleaning v2 and chunking v2 decisions
+4. Reindex ChromaDB and BM25
+5. Build the 5,490 / 610 train-validation split
+6. Fine-tune Gemma 4 with PEFT
+7. Route queries with dual retrievers
+8. Expose the system through Streamlit, Chainlit, and FastAPI
 
 ## Notes
 
