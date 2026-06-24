@@ -133,6 +133,28 @@ The diagram above reflects the main runtime path in the repository:
 
 > Metric comparison across 4 model configurations. Configuration 2 (green) achieves the highest score (0.78).
 
+---
+
+## Training Results
+
+### Gemma 4-E4B v2 — PEFT Loss Curve
+
+<p align="center">
+  <img src="docs/screenshots/gemma4-loss-curve.png" alt="Gemma4 E4B v2 Loss Curve" width="860">
+</p>
+
+> Gemma 4-E4B fine-tuning via PEFT/LoRA. Train and eval loss converge stably to ~1.3 by step 260.
+
+---
+
+### Phi-4-mini — PEFT Loss Curve
+
+<p align="center">
+  <img src="docs/screenshots/phi4-loss-curve.png" alt="Phi-4-mini Loss Curve" width="860">
+</p>
+
+> Phi-4-mini fine-tuning via PEFT/LoRA. Train and eval loss converge to ~0.85 over 1,000 steps with no overfitting.
+
 ## Sections at a Glance
 
 | Section | What it covers |
@@ -384,6 +406,26 @@ FastAPI 백엔드는 RAG 출력에 대해 다음 평가 지표를 제공합니�
 - Context Recall
 
 관리자 대시보드에서는 지연 시간과 검색 메타데이터도 확인할 수 있습니다.
+
+## 학습 결과
+
+### Gemma 4-E4B v2 — PEFT Loss Curve
+
+<p align="center">
+  <img src="docs/screenshots/gemma4-loss-curve.png" alt="Gemma4 E4B v2 Loss Curve" width="860">
+</p>
+
+> PEFT/LoRA 기반 Gemma 4-E4B 파인튜닝. Train/eval loss가 step 260 시점에 ~1.3으로 안정 수렴.
+
+---
+
+### Phi-4-mini — PEFT Loss Curve
+
+<p align="center">
+  <img src="docs/screenshots/phi4-loss-curve.png" alt="Phi-4-mini Loss Curve" width="860">
+</p>
+
+> PEFT/LoRA 기반 Phi-4-mini 파인튜닝. 1,000 step에 걸쳐 ~0.85까지 수렴, 과적합 없이 안정적으로 학습됨.
 
 ## 메모
 
