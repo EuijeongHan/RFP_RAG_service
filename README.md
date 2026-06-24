@@ -34,6 +34,45 @@ The project is centered on RFP-style document analysis.
 - vLLM switch scripts for model serving experiments
 - PEFT training notebook for `google/gemma-4-E4B-it`
 
+## Architecture
+
+```mermaid
+flowchart LR
+    U[User] --> UI[Streamlit / Chainlit UI]
+    UI --> API[FastAPI Backend]
+    UI --> SVC[GenerationService]
+    API --> SVC
+    SVC --> RET[Hybrid Retrieval]
+    RET --> CHROMA[ChromaDB]
+    RET --> BM25[BM25 Index]
+    RET --> EMB[KURE-v1 Embeddings]
+    RET --> RERANK[Reranker]
+    SVC --> GEN[Generation Layer]
+    GEN --> LOCAL[Phi-4-mini]
+    GEN --> GEMINI[Gemini]
+    GEN --> OPENAI[OpenAI / OpenRouter]
+    GEN --> VLLM[vLLM]
+    SVC --> METRIC[Evaluation Metrics]
+```
+
+The diagram above reflects the main runtime path in the repository:
+
+- UI layer: Streamlit, Chainlit
+- Service layer: `GenerationService`
+- Retrieval layer: ChromaDB, BM25, embeddings, reranking
+- Generation layer: local and API-backed LLMs
+- Evaluation layer: RAG metrics exposed by the FastAPI backend
+
+## Screenshots
+
+Add project screenshots under `docs/` and reference them here.
+
+| Image | Purpose |
+| --- | --- |
+| `docs/streamlit-dashboard.png` | Main RAG dashboard |
+| `docs/chainlit-chat.png` | Chainlit chat UI |
+| `docs/api-metrics.png` | FastAPI evaluation or metrics output |
+
 ## Verified Snapshot
 
 These values are directly reflected in the notebooks and project scripts:
