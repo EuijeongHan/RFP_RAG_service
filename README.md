@@ -85,13 +85,53 @@ The diagram above reflects the main runtime path in the repository:
 
 ## Screenshots
 
-Add project screenshots under `docs/` and reference them here.
+### Main RAG Dashboard
 
-| Image | Purpose |
-| --- | --- |
-| `docs/streamlit-dashboard.png` | Main RAG dashboard |
-| `docs/chainlit-chat.png` | Chainlit chat UI |
-| `docs/api-metrics.png` | FastAPI evaluation or metrics output |
+<p align="center">
+  <img src="docs/screenshots/streamlit-dashboard.png" alt="Streamlit RAG Dashboard" width="860">
+</p>
+
+> Streamlit dashboard showing retrieved documents, used context, and metadata filters for a public RFP query.
+
+---
+
+### Evaluation Metrics (Retrieved Docs View)
+
+<p align="center">
+  <img src="docs/screenshots/retrieved-docs-metrics.png" alt="Evaluation Metrics" width="860">
+</p>
+
+> Live RAG quality scores per query — Faithfulness, Answer Relevancy, Context Precision, Context Recall — shown in the Retrieved Docs tab.
+
+---
+
+### Retrieval Strategy Comparison (Task Types A–E)
+
+<p align="center">
+  <img src="docs/screenshots/retrieval-comparison.png" alt="Retrieval Comparison Chart" width="720">
+</p>
+
+> Comparison of `chunks_all`, `kh_v3`, and `kh_v3 hybrid` retrievers across the five task types. Type C benefits most from `kh_v3` due to its history-heavy content.
+
+---
+
+### Chunking Strategy Comparison
+
+<p align="center">
+  <img src="docs/screenshots/chunking-comparison.png" alt="Chunking Strategy Comparison" width="560">
+</p>
+
+> `fixed_1200_200` (right, green) outperforms the baseline (left) — selected as the final chunking strategy.
+
+---
+
+### Model Performance Comparison
+
+<p align="center">
+  <img src="docs/screenshots/model-comparison.png" alt="Model Comparison" width="560">
+</p>
+
+> Metric comparison across 4 model configurations. Configuration 2 (green) achieves the highest score (0.78).
 
 ## Sections at a Glance
 
